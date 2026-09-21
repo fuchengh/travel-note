@@ -15,7 +15,7 @@
 晚:
 - 18:30 入住 Grand Hyatt Tokyo [住宿]
   - 地址: 東京都港区六本木 6-10-3 (六本木站 1C 出口步行 3 分鐘)
-  - 備註: 含飯店早餐與館內餐飲額度
+  - 備註: 含飯店早餐與館內餐飲額度 (FHR $125)
   - 導航: https://www.google.com/maps/search/?api=1&query=Grand+Hyatt+Tokyo
 地圖:
 - 成田國際機場 (NRT) [交通] @35.7720,140.3929
