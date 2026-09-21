@@ -2733,8 +2733,35 @@ body {
   border-color: var(--transit-fg);
 }
 
-/* Clean Map Pin: strictly [Number] ShortName colored by category */
+/* Clean Map Pin: strictly [Number] ShortName colored by category + screen-space de-overlap */
+.wn-gmap-pin-wrap {
+  position: relative;
+  width: 0;
+  height: 0;
+}
+
+.wn-gmap-anchor-dot {
+  position: absolute;
+  left: -3.5px;
+  top: -3.5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #1E221F;
+  border: 1.5px solid #FCFBF8;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s ease;
+}
+
+.wn-gmap-anchor-dot.is-offset {
+  opacity: 0.9;
+}
+
 .wn-gmap-clean-pin {
+  --pin-dx: 0px;
+  --pin-dy: 0px;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -2748,12 +2775,12 @@ body {
   font-family: 'Inter', 'Noto Sans TC', sans-serif;
   font-size: 11.5px;
   font-weight: 700;
-  transform: translate(-14px, -14px);
-  transition: transform 0.12s ease, opacity 0.15s ease;
+  transform: translate(calc(-14px + var(--pin-dx)), calc(-14px + var(--pin-dy)));
+  transition: transform 0.14s ease, opacity 0.15s ease;
 }
 
 .wn-gmap-clean-pin:hover {
-  transform: translate(-14px, -16px) scale(1.06);
+  transform: translate(calc(-14px + var(--pin-dx)), calc(-16px + var(--pin-dy))) scale(1.06);
   z-index: 4000 !important;
 }
 
@@ -3475,7 +3502,7 @@ body {
 
   </style>
   <script>
-window.__WANDERNOTE_BOOT__ = {"venuesGeo": {"venues": {}, "dayMeta": {}}, "bundledAt": "2026-09-20T18:37:08.858740+00:00"};
+window.__TRAVELNOTE_BOOT__ = {"venuesGeo": {"venues": {}, "dayMeta": {}}, "bundledAt": "2026-09-21T01:42:49.259798+00:00"};
 </script>
   <script>
 /* ============================================================================
@@ -3551,8 +3578,6 @@ window.__WANDERNOTE_BOOT__ = {"venuesGeo": {"venues": {}, "dayMeta": {}}, "bundl
   /* --------------------------------------------------------------------------
    * 4. COORDINATE EXTRACTION, VENUE MATCHING & CATEGORY CLASSIFICATION
    * -------------------------------------------------------------------------- */
-  const PURE_DISTRICT_KEYS = new Set(['六本木', '惠比壽', '銀座', '五反田']);
-
   function extractInlineCoords(str) {
     if (!str) return null;
     const atMatch = String(str).match(/@(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)/);
@@ -3642,7 +3667,6 @@ window.__WANDERNOTE_BOOT__ = {"venuesGeo": {"venues": {}, "dayMeta": {}}, "bundl
     cleaned = cleaned
       .replace(/^(?:入住|住宿：|抵達|前往|搭乘|參觀)\s*/, '')
       .replace(/\s*\([^)]*\)/g, '')
-      .replace(/\s*(?:Steak House Tokyo|Hotel & Convention|飯店早餐|銀座店|表參道店|赤坂店|博多本店).*$/i, '')
       .split(/\s*(?:&|·)\s*/)[0]
       .trim();
     return cleaned.slice(0, 12) || displayTitle.slice(0, 12);
@@ -4013,7 +4037,7 @@ window.__WANDERNOTE_BOOT__ = {"venuesGeo": {"venues": {}, "dayMeta": {}}, "bundl
               const coord = { lat: parseFloat(arr[0].lat), lng: parseFloat(arr[0].lon) };
               state.geoCache[query] = coord;
               state.geoCache[it.displayTitle] = coord;
-              safeStorageSet('wandernote_geocache_v1', JSON.stringify(state.geoCache));
+              safeStorageSet('travelnote_geocache_v1', JSON.stringify(state.geoCache));
               it.lat = coord.lat;
               it.lng = coord.lng;
               updated = true;
@@ -4565,6 +4589,118 @@ window.__WANDERNOTE_BOOT__ = {"venuesGeo": {"venues": {}, "dayMeta": {}}, "bundl
     }).addTo(state.leafletMap);
 
     state.leafletLayerGroup = L.layerGroup().addTo(state.leafletMap);
+
+    if (!state.leafletMap._hasScreenDeoverlap) {
+      state.leafletMap.on('zoomend moveend', () => {
+        applyScreenSpacePinSeparation();
+      });
+      state.leafletMap._hasScreenDeoverlap = true;
+    }
+  }
+
+  function applyScreenSpacePinSeparation() {
+    if (!state.leafletMap || !Array.isArray(state.mapMarkersList) || state.mapMarkersList.length === 0) {
+      return;
+    }
+
+    const nodes = [];
+    state.mapMarkersList.forEach((entry) => {
+      const el = entry.marker && typeof entry.marker.getElement === 'function' ? entry.marker.getElement() : null;
+      if (!el) return;
+      const pillEl = el.querySelector('.wn-gmap-clean-pin');
+      const anchorEl = el.querySelector('.wn-gmap-anchor-dot');
+      if (!pillEl) return;
+
+      const pt = state.leafletMap.latLngToContainerPoint([entry.pin.plotLat, entry.pin.plotLng]);
+      const w = Math.max(102, pillEl.offsetWidth || 120);
+      const h = Math.max(26, pillEl.offsetHeight || 28);
+
+      nodes.push({
+        entry,
+        pillEl,
+        anchorEl,
+        x: pt.x,
+        y: pt.y,
+        dx: 0,
+        dy: 0,
+        w,
+        h
+      });
+    });
+
+    if (nodes.length <= 1) {
+      nodes.forEach((n) => {
+        n.pillEl.style.setProperty('--pin-dx', '0px');
+        n.pillEl.style.setProperty('--pin-dy', '0px');
+        if (n.anchorEl) n.anchorEl.classList.remove('is-offset');
+      });
+      return;
+    }
+
+    // Sort deterministically by pinNumber so #1 stays anchored or top-most, and #2, #3, #4 stack cleanly
+    nodes.sort((a, b) => (a.entry.pin.pinNumber || 0) - (b.entry.pin.pinNumber || 0));
+
+    // Group nearby pins in screen space (within 135px horizontally and 36px vertically) and assign clean vertical slots
+    const placed = [];
+    const candidateOffsets = [
+      [0, 0],
+      [0, 30],
+      [0, -30],
+      [0, 60],
+      [0, -60],
+      [115, 0],
+      [-115, 0],
+      [115, 30],
+      [-115, -30],
+      [0, 90],
+      [0, -90]
+    ];
+
+    nodes.forEach((node) => {
+      let bestOffset = [0, 0];
+      let minPenalty = Infinity;
+
+      for (let i = 0; i < candidateOffsets.length; i++) {
+        const [candDx, candDy] = candidateOffsets[i];
+        const testX = node.x + candDx;
+        const testY = node.y + candDy;
+
+        let overlapPenalty = 0;
+        for (let j = 0; j < placed.length; j++) {
+          const other = placed[j];
+          const otherX = other.x + other.dx;
+          const otherY = other.y + other.dy;
+          const minSepX = (node.w + other.w) * 0.5 + 6;
+          const minSepY = 28;
+
+          const overlapX = minSepX - Math.abs(testX - otherX);
+          const overlapY = minSepY - Math.abs(testY - otherY);
+          if (overlapX > 0 && overlapY > 0) {
+            overlapPenalty += overlapX * overlapY * 100;
+          }
+        }
+
+        const distPenalty = Math.hypot(candDx * 0.6, candDy);
+        const totalPenalty = overlapPenalty + distPenalty;
+        if (totalPenalty < minPenalty) {
+          minPenalty = totalPenalty;
+          bestOffset = [candDx, candDy];
+          if (overlapPenalty === 0 && i === 0) break;
+        }
+      }
+
+      node.dx = bestOffset[0];
+      node.dy = bestOffset[1];
+      placed.push(node);
+    });
+
+    nodes.forEach((n) => {
+      n.pillEl.style.setProperty('--pin-dx', `${Math.round(n.dx)}px`);
+      n.pillEl.style.setProperty('--pin-dy', `${Math.round(n.dy)}px`);
+      if (n.anchorEl) {
+        n.anchorEl.classList.toggle('is-offset', Math.hypot(n.dx, n.dy) > 4);
+      }
+    });
   }
 
   function renderRightPaneAndMap(shouldFitBounds = true) {
@@ -4573,6 +4709,7 @@ window.__WANDERNOTE_BOOT__ = {"venuesGeo": {"venues": {}, "dayMeta": {}}, "bundl
 
     initLeafletMapIfNeeded();
     state.activeMarkersBySlotId = {};
+    state.mapMarkersList = [];
 
     const { geoItems } = buildDayDeduplicatedGeoItems(day);
 
@@ -4596,7 +4733,7 @@ window.__WANDERNOTE_BOOT__ = {"venuesGeo": {"venues": {}, "dayMeta": {}}, "bundl
 
     if (state.leafletMap && state.leafletLayerGroup) {
       state.leafletLayerGroup.clearLayers();
-      const latLngs = [];
+      const visibleItems = [];
 
       geoItems.forEach((item) => {
         const isIntercontinental = item.lng < -50;
@@ -4604,7 +4741,7 @@ window.__WANDERNOTE_BOOT__ = {"venuesGeo": {"venues": {}, "dayMeta": {}}, "bundl
           state.activeMapCatFilter === 'ALL' || item.categoryLabel === state.activeMapCatFilter;
 
         if (!isIntercontinental && matchesFilter) {
-          latLngs.push([item.plotLat, item.plotLng]);
+          visibleItems.push(item);
         }
 
         const dimClass = matchesFilter ? '' : 'pin-dimmed';
@@ -4612,13 +4749,16 @@ window.__WANDERNOTE_BOOT__ = {"venuesGeo": {"venues": {}, "dayMeta": {}}, "bundl
         const icon = L.divIcon({
           className: '',
           html: `
-            <div class="wn-gmap-clean-pin pin-cat-${escapeHtml(item.categoryLabel)} ${dimClass}">
-              <span class="wn-gmap-pin-num">${item.pinNumber}</span>
-              <span class="wn-gmap-pin-name">${escapeHtml(item.shortName || item.venueName)}</span>
+            <div class="wn-gmap-pin-wrap">
+              <span class="wn-gmap-anchor-dot"></span>
+              <div class="wn-gmap-clean-pin pin-cat-${escapeHtml(item.categoryLabel)} ${dimClass}">
+                <span class="wn-gmap-pin-num">${item.pinNumber}</span>
+                <span class="wn-gmap-pin-name">${escapeHtml(item.shortName || item.venueName)}</span>
+              </div>
             </div>
           `,
           iconSize: null,
-          iconAnchor: [16, 16],
+          iconAnchor: [0, 0],
           popupAnchor: [30, -14]
         });
 
@@ -4659,12 +4799,39 @@ window.__WANDERNOTE_BOOT__ = {"venuesGeo": {"venues": {}, "dayMeta": {}}, "bundl
         });
 
         state.activeMarkersBySlotId[item.id] = marker;
+        if (!isIntercontinental && matchesFilter) {
+          state.mapMarkersList.push({ id: item.id, pin: item, marker });
+        }
       });
 
-      if (shouldFitBounds && latLngs.length > 0) {
+      if (shouldFitBounds && visibleItems.length > 0) {
+        // Smart City-Cluster fitBounds: if >= 2 non-airport city stops exist, exclude distant airports (> 0.15 deg away)
+        // from initial fitBounds so Roppongi/Hakata/Sapporo street clusters frame at zoom 15 instead of zoom 9!
+        const nonAirportPins = visibleItems.filter(
+          (it) => it.categoryLabel !== '交通' && !/機場|Airport/i.test(it.venueName || it.displayTitle || '')
+        );
+        let boundsItems = visibleItems;
+        if (nonAirportPins.length >= 2) {
+          const sortedLats = nonAirportPins.map((p) => p.plotLat).sort((a, b) => a - b);
+          const sortedLngs = nonAirportPins.map((p) => p.plotLng).sort((a, b) => a - b);
+          const medLat = sortedLats[Math.floor(sortedLats.length / 2)];
+          const medLng = sortedLngs[Math.floor(sortedLngs.length / 2)];
+          const clusterOnly = visibleItems.filter(
+            (p) => Math.hypot(p.plotLat - medLat, p.plotLng - medLng) <= 0.15
+          );
+          if (clusterOnly.length >= 2) {
+            boundsItems = clusterOnly;
+          }
+        }
+
+        const latLngs = boundsItems.map((p) => [p.plotLat, p.plotLng]);
         const bounds = L.latLngBounds(latLngs);
-        state.leafletMap.fitBounds(bounds, { padding: [48, 48], maxZoom: 15 });
+        state.leafletMap.fitBounds(bounds, { padding: [52, 52], maxZoom: 16 });
       }
+
+      requestAnimationFrame(() => {
+        applyScreenSpacePinSeparation();
+      });
     }
   }
 
@@ -4673,8 +4840,9 @@ window.__WANDERNOTE_BOOT__ = {"venuesGeo": {"venues": {}, "dayMeta": {}}, "bundl
     if (marker && state.leafletMap) {
       marker.setZIndexOffset(3000);
       const ll = marker.getLatLng();
-      state.leafletMap.setView(ll, Math.max(state.leafletMap.getZoom(), 15), { animate: true });
+      state.leafletMap.setView(ll, Math.max(state.leafletMap.getZoom(), 16), { animate: true });
       marker.openPopup();
+      setTimeout(() => applyScreenSpacePinSeparation(), 260);
     }
   }
 
@@ -4725,8 +4893,16 @@ window.__WANDERNOTE_BOOT__ = {"venuesGeo": {"venues": {}, "dayMeta": {}}, "bundl
     renderDynamicTitleAndRegionTabs();
     renderDayStrip();
     renderLeftSchedulePane();
-    renderRightPaneAndMap(shouldFitBounds);
-    autoGeocodeMissingStopsIfNeeded();
+    try {
+      renderRightPaneAndMap(shouldFitBounds);
+    } catch (err) {
+      console.warn('Map render warning:', err);
+    }
+    try {
+      autoGeocodeMissingStopsIfNeeded();
+    } catch (_err) {
+      // Ignore background geocoding errors
+    }
   }
 
   function selectDay(dayKey) {
@@ -4744,7 +4920,7 @@ window.__WANDERNOTE_BOOT__ = {"venuesGeo": {"venues": {}, "dayMeta": {}}, "bundl
       state.activeRegionFilter = targetDay.shortCity;
     }
 
-    safeStorageSet('wandernote_active_day', dayKey);
+    safeStorageSet('travelnote_active_day', dayKey);
     renderAll(true);
   }
 
@@ -4876,53 +5052,64 @@ window.__WANDERNOTE_BOOT__ = {"venuesGeo": {"venues": {}, "dayMeta": {}}, "bundl
     });
   }
 
-  /* --------------------------------------------------------------------------
-   * 12. BOOTSTRAP SEQUENCE (Stateless Renderer of ./itinerary.md)
-   * -------------------------------------------------------------------------- */
-  async function bootstrap() {
-    try {
-      state.geoCache = JSON.parse(safeStorageGet('wandernote_geocache_v1', '{}') || '{}');
-    } catch (_e) {
-      state.geoCache = {};
-    }
-
-    if (typeof window !== 'undefined' && window.__WANDERNOTE_BOOT__) {
-      state.venuesGeo = window.__WANDERNOTE_BOOT__.venuesGeo || { venues: {}, dayMeta: {} };
-    }
-
-    try {
-      const mdResp = await fetch(`./itinerary.md?v=${Date.now()}`, { cache: 'no-store' });
-      if (mdResp.ok) {
-        const mdText = await mdResp.text();
-        if (mdText && mdText.trim().length > 20) {
-          state.rawMarkdown = mdText.trim() + '\n';
-        }
-      }
-    } catch (_err) {
-      // Fallback when running in opaque null-origin iframe or file://
-    }
-
-    if (!state.rawMarkdown) {
-      const inlineMdEl = document.getElementById('itinerary-markdown');
-      if (inlineMdEl && inlineMdEl.textContent && inlineMdEl.textContent.trim().length > 20) {
-        state.rawMarkdown = inlineMdEl.textContent.trim() + '\n';
-      }
-    }
-
-    if (!state.rawMarkdown) {
-      state.rawMarkdown = FALLBACK_MARKDOWN;
-    }
-
+  function applyMarkdownToStateAndRender(mdText) {
+    if (!mdText || mdText.trim().length <= 20) return false;
+    state.rawMarkdown = mdText.trim() + '\n';
     state.days = parseItineraryMarkdown(state.rawMarkdown);
-    const savedDay = safeStorageGet('wandernote_active_day', state.days[0] ? state.days[0].dateStr : '');
+    const savedDay = safeStorageGet('travelnote_active_day', state.days[0] ? state.days[0].dateStr : '');
     if (state.days.some((d) => d.dateStr === savedDay)) {
       state.activeDayKey = savedDay;
     } else if (state.days[0]) {
       state.activeDayKey = state.days[0].dateStr;
     }
+    renderAll(true);
+    return true;
+  }
+
+  /* --------------------------------------------------------------------------
+   * 12. BOOTSTRAP SEQUENCE (Instant Inline Render + Live ./itinerary.md Sync)
+   * -------------------------------------------------------------------------- */
+  async function bootstrap() {
+    try {
+      state.geoCache = JSON.parse(safeStorageGet('travelnote_geocache_v1', '{}') || '{}');
+    } catch (_e) {
+      state.geoCache = {};
+    }
+
+    if (typeof window !== 'undefined' && window.__TRAVELNOTE_BOOT__) {
+      state.venuesGeo = window.__TRAVELNOTE_BOOT__.venuesGeo || { venues: {}, dayMeta: {} };
+    }
 
     bindAllEvents();
-    renderAll(true);
+
+    // 1. Immediately render embedded fallback (<script id="itinerary-markdown"> or __TRAVELNOTE_BOOT__.markdown)
+    // so sandboxed null-origin environments (CSP sandbox allow-scripts) and file:// render at frame 0!
+    const inlineMdEl = document.getElementById('itinerary-markdown');
+    if (inlineMdEl && inlineMdEl.textContent && inlineMdEl.textContent.trim().length > 20) {
+      applyMarkdownToStateAndRender(inlineMdEl.textContent);
+    } else if (typeof window !== 'undefined' && window.__TRAVELNOTE_BOOT__ && window.__TRAVELNOTE_BOOT__.markdown) {
+      applyMarkdownToStateAndRender(window.__TRAVELNOTE_BOOT__.markdown);
+    }
+
+    // 2. Fetch live ./itinerary.md when running on standard HTTP/HTTPS origin (Vercel, GitHub Pages, localhost)
+    if (
+      typeof window !== 'undefined' &&
+      window.origin !== 'null' &&
+      window.location &&
+      window.location.protocol !== 'file:'
+    ) {
+      try {
+        const mdResp = await fetch(`./itinerary.md?v=${Date.now()}`, { cache: 'no-store' });
+        if (mdResp.ok) {
+          const mdText = await mdResp.text();
+          if (mdText && mdText.trim().length > 20 && mdText.trim() + '\n' !== state.rawMarkdown) {
+            applyMarkdownToStateAndRender(mdText);
+          }
+        }
+      } catch (_err) {
+        // Already rendered from inline #itinerary-markdown fallback
+      }
+    }
   }
 
   if (document.readyState === 'loading') {
