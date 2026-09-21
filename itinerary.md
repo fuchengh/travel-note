@@ -2,7 +2,7 @@
 
 ## 12/07 (一) | 東京 | Grand Hyatt Tokyo
 摘要: 午後抵達成田機場，傍晚前往六本木入住 Grand Hyatt Tokyo。
-備註: Grand Hyatt Tokyo 含飯店早餐與館內餐飲額度。
+備註: Grand Hyatt Tokyo 含飯店早餐與館內餐飲額度 (FHR $125)。
 早:
 - 08:00-15:50 JL 57 舊金山 (SFO) ➔ 成田機場 (NRT) [交通]
   - 說明: 日本航空 JL 57 國際線直飛，16:00 抵達成田第 2 航廈
@@ -22,7 +22,7 @@
   - 備註: 16:00 JL 57 抵達第 2 航廈
 - Grand Hyatt Tokyo [住宿] @35.6595,139.7292
   - 地址: 東京都港区六本木 6-10-3
-  - 備註: 含飯店早餐與館內餐飲額度
+  - 備註: 含飯店早餐與館內餐飲額度 (FHR $125)
   - 導航: https://www.google.com/maps/search/?api=1&query=Grand+Hyatt+Tokyo
 - 六本木欅坂通 (Keyakizaka Illumination) [景點] @35.6590,139.7305
   - 備註: 飯店旁冬季聖誕燈飾散步動線
